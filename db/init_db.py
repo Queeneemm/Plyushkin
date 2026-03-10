@@ -1,5 +1,5 @@
 from db.base import Base
-from db.models import User, AllowedChat, Product, ProductAlias, InventorySession, InventoryItem
+from db.models import User, AllowedChat, AllowedChatTopic, Product, ProductAlias, InventorySession, InventoryItem
 from db.session import engine
 
 

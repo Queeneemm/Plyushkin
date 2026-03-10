@@ -47,6 +47,18 @@ class AllowedChat(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AllowedChatTopic(Base):
+    __tablename__ = 'allowed_chat_topics'
+    __table_args__ = (UniqueConstraint('chat_id', 'thread_id', name='uq_chat_thread'),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    thread_id: Mapped[int] = mapped_column(Integer, index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Product(Base):
     __tablename__ = 'products'
 
