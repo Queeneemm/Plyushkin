@@ -2,9 +2,10 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.keyboards.inline import back_keyboard, pool_menu_keyboard
 from bot.states.forms import PoolStates
 from config.settings import get_settings
 from services.crm_parser import CRMExcelParser, CRMParserConfig
@@ -14,23 +15,22 @@ router = Router()
 
 
 @router.message(F.text == 'Управление пулом')
-async def pool_menu(message: Message) -> None:
-    await message.answer(
-        'Команды пула:\n'
-        '/pool_import - импорт из CRM xlsx\n'
-        '/pool_add - добавить вручную\n'
-        '/pool_search <текст> - поиск\n'
-        '/pool_archive <id> - архивировать\n'
-        '/pool_restore <id> - восстановить\n'
-        '/pool_rename <id> <новое имя> - переименовать\n'
-        '/pool_aliases <id> <alias1,alias2> - алиасы'
-    )
+@router.callback_query(F.data == 'menu:pool')
+async def pool_menu(event: Message | CallbackQuery) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
+    await msg.answer('Управление пулом:', reply_markup=pool_menu_keyboard())
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 @router.message(F.text == '/pool_import')
-async def import_request(message: Message, state: FSMContext) -> None:
+@router.callback_query(F.data == 'pool:import')
+async def import_request(event: Message | CallbackQuery, state: FSMContext) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
     await state.set_state(PoolStates.waiting_import_file)
-    await message.answer('Пришлите CRM xlsx для мягкого импорта товаров.')
+    await msg.answer('Пришлите CRM xlsx для мягкого импорта товаров.', reply_markup=back_keyboard('menu:pool'))
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 @router.message(PoolStates.waiting_import_file, F.document)
@@ -48,21 +48,25 @@ async def import_file(message: Message, state: FSMContext, session: AsyncSession
     parser = CRMExcelParser(CRMParserConfig(settings.crm_name_column, settings.crm_stock_column, settings.crm_header_row))
     stock_map = parser.parse_stock(local)
     added, existed = await ProductService(session).import_pool(list(stock_map.keys()))
-    await message.answer(f'Импорт завершен. Добавлено: {added}, уже существовало: {existed}.')
+    await message.answer(f'Импорт завершен. Добавлено: {added}, уже существовало: {existed}.', reply_markup=pool_menu_keyboard())
     await state.clear()
 
 
 @router.message(F.text == '/pool_add')
-async def pool_add_start(message: Message, state: FSMContext) -> None:
+@router.callback_query(F.data == 'pool:add')
+async def pool_add_start(event: Message | CallbackQuery, state: FSMContext) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
     await state.set_state(PoolStates.waiting_manual_name)
-    await message.answer('Введите полное наименование:')
+    await msg.answer('Введите полное наименование:', reply_markup=back_keyboard('menu:pool'))
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 @router.message(PoolStates.waiting_manual_name)
 async def pool_add_name(message: Message, state: FSMContext) -> None:
     await state.update_data(full_name=message.text or '')
     await state.set_state(PoolStates.waiting_manual_aliases)
-    await message.answer('Введите алиасы через запятую (или -):')
+    await message.answer('Введите алиасы через запятую (или -):', reply_markup=back_keyboard('menu:pool'))
 
 
 @router.message(PoolStates.waiting_manual_aliases)
@@ -70,79 +74,173 @@ async def pool_add_aliases(message: Message, state: FSMContext, session: AsyncSe
     data = await state.get_data()
     aliases = '' if (message.text or '').strip() == '-' else (message.text or '')
     product = await ProductService(session).add_manual(data['full_name'], aliases)
-    await message.answer(f'Товар добавлен: {product.full_name} (id={product.id}).')
+    await message.answer(f'Товар добавлен: {product.full_name} (id={product.id}).', reply_markup=pool_menu_keyboard())
     await state.clear()
 
 
+@router.callback_query(F.data == 'pool:search')
+async def pool_search_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PoolStates.waiting_search_query)
+    await callback.message.answer('Введите строку поиска:', reply_markup=back_keyboard('menu:pool'))
+    await callback.answer()
+
+
+@router.message(PoolStates.waiting_search_query)
 @router.message(F.text.startswith('/pool_search'))
-async def pool_search(message: Message, session: AsyncSession) -> None:
-    query = (message.text or '').split(maxsplit=1)
-    if len(query) < 2:
-        await message.answer('Использование: /pool_search <текст>')
-        return
-    products = await ProductService(session).search_active(query[1], limit=15)
+async def pool_search(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    if await state.get_state() == PoolStates.waiting_search_query.state:
+        text = (message.text or '').strip()
+    else:
+        query = (message.text or '').split(maxsplit=1)
+        if len(query) < 2:
+            await message.answer('Использование: /pool_search <текст>')
+            return
+        text = query[1]
+    products = await ProductService(session).search_active(text, limit=15)
     if not products:
-        await message.answer('Ничего не найдено.')
+        await message.answer('Ничего не найдено.', reply_markup=pool_menu_keyboard())
+        await state.clear()
         return
     lines = [f"{p.id}: {p.full_name}" for p in products]
-    await message.answer('\n'.join(lines))
+    await message.answer('\n'.join(lines), reply_markup=pool_menu_keyboard())
+    await state.clear()
 
 
+@router.callback_query(F.data == 'pool:archive')
+async def pool_archive_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PoolStates.waiting_archive_id)
+    await callback.message.answer('Введите ID товара для архивации:', reply_markup=back_keyboard('menu:pool'))
+    await callback.answer()
+
+
+@router.message(PoolStates.waiting_archive_id)
 @router.message(F.text.startswith('/pool_archive'))
-async def pool_archive(message: Message, session: AsyncSession) -> None:
-    parts = (message.text or '').split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer('Использование: /pool_archive <id>')
+async def pool_archive(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    if await state.get_state() == PoolStates.waiting_archive_id.state:
+        raw_id = (message.text or '').strip()
+    else:
+        parts = (message.text or '').split()
+        raw_id = parts[1] if len(parts) == 2 else ''
+    if not raw_id.isdigit():
+        await message.answer('Нужен корректный числовой id.')
         return
     ps = ProductService(session)
-    product = await ps.get(int(parts[1]))
+    product = await ps.get(int(raw_id))
     if not product:
         await message.answer('Товар не найден.')
         return
     await ps.archive(product, False)
-    await message.answer('Товар архивирован.')
+    await message.answer('Товар архивирован.', reply_markup=pool_menu_keyboard())
+    await state.clear()
 
 
+@router.callback_query(F.data == 'pool:restore')
+async def pool_restore_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PoolStates.waiting_restore_id)
+    await callback.message.answer('Введите ID товара для восстановления:', reply_markup=back_keyboard('menu:pool'))
+    await callback.answer()
+
+
+@router.message(PoolStates.waiting_restore_id)
 @router.message(F.text.startswith('/pool_restore'))
-async def pool_restore(message: Message, session: AsyncSession) -> None:
-    parts = (message.text or '').split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer('Использование: /pool_restore <id>')
+async def pool_restore(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    if await state.get_state() == PoolStates.waiting_restore_id.state:
+        raw_id = (message.text or '').strip()
+    else:
+        parts = (message.text or '').split()
+        raw_id = parts[1] if len(parts) == 2 else ''
+    if not raw_id.isdigit():
+        await message.answer('Нужен корректный числовой id.')
         return
     ps = ProductService(session)
-    product = await ps.get(int(parts[1]))
+    product = await ps.get(int(raw_id))
     if not product:
         await message.answer('Товар не найден.')
         return
     await ps.archive(product, True)
-    await message.answer('Товар восстановлен.')
+    await message.answer('Товар восстановлен.', reply_markup=pool_menu_keyboard())
+    await state.clear()
 
 
+@router.callback_query(F.data == 'pool:rename')
+async def pool_rename_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PoolStates.waiting_rename_id)
+    await callback.message.answer('Введите ID товара для переименования:', reply_markup=back_keyboard('menu:pool'))
+    await callback.answer()
+
+
+@router.message(PoolStates.waiting_rename_id)
+async def pool_rename_id(message: Message, state: FSMContext) -> None:
+    raw = (message.text or '').strip()
+    if not raw.isdigit():
+        await message.answer('Нужен числовой id.')
+        return
+    await state.update_data(rename_id=int(raw))
+    await state.set_state(PoolStates.waiting_rename_name)
+    await message.answer('Введите новое наименование:', reply_markup=back_keyboard('menu:pool'))
+
+
+@router.message(PoolStates.waiting_rename_name)
 @router.message(F.text.startswith('/pool_rename'))
-async def pool_rename(message: Message, session: AsyncSession) -> None:
-    parts = (message.text or '').split(maxsplit=2)
-    if len(parts) != 3 or not parts[1].isdigit():
-        await message.answer('Использование: /pool_rename <id> <новое имя>')
+async def pool_rename(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    if await state.get_state() == PoolStates.waiting_rename_name.state:
+        data = await state.get_data()
+        pid = data.get('rename_id')
+        new_name = (message.text or '').strip()
+    else:
+        parts = (message.text or '').split(maxsplit=2)
+        pid = int(parts[1]) if len(parts) == 3 and parts[1].isdigit() else None
+        new_name = parts[2] if len(parts) == 3 else ''
+    if not pid or not new_name:
+        await message.answer('Нужны id и новое имя.')
         return
     ps = ProductService(session)
-    product = await ps.get(int(parts[1]))
+    product = await ps.get(pid)
     if not product:
         await message.answer('Товар не найден.')
         return
-    await ps.update_name(product, parts[2])
-    await message.answer('Наименование обновлено.')
+    await ps.update_name(product, new_name)
+    await message.answer('Наименование обновлено.', reply_markup=pool_menu_keyboard())
+    await state.clear()
 
 
+@router.callback_query(F.data == 'pool:aliases')
+async def pool_aliases_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PoolStates.waiting_aliases_id)
+    await callback.message.answer('Введите ID товара для обновления алиасов:', reply_markup=back_keyboard('menu:pool'))
+    await callback.answer()
+
+
+@router.message(PoolStates.waiting_aliases_id)
+async def pool_aliases_id(message: Message, state: FSMContext) -> None:
+    raw = (message.text or '').strip()
+    if not raw.isdigit():
+        await message.answer('Нужен числовой id.')
+        return
+    await state.update_data(aliases_id=int(raw))
+    await state.set_state(PoolStates.waiting_aliases_value)
+    await message.answer('Введите алиасы через запятую:', reply_markup=back_keyboard('menu:pool'))
+
+
+@router.message(PoolStates.waiting_aliases_value)
 @router.message(F.text.startswith('/pool_aliases'))
-async def pool_aliases(message: Message, session: AsyncSession) -> None:
-    parts = (message.text or '').split(maxsplit=2)
-    if len(parts) != 3 or not parts[1].isdigit():
-        await message.answer('Использование: /pool_aliases <id> <alias1,alias2>')
+async def pool_aliases(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    if await state.get_state() == PoolStates.waiting_aliases_value.state:
+        data = await state.get_data()
+        pid = data.get('aliases_id')
+        aliases = (message.text or '').strip()
+    else:
+        parts = (message.text or '').split(maxsplit=2)
+        pid = int(parts[1]) if len(parts) == 3 and parts[1].isdigit() else None
+        aliases = parts[2] if len(parts) == 3 else ''
+    if not pid:
+        await message.answer('Нужен id товара.')
         return
     ps = ProductService(session)
-    product = await ps.get(int(parts[1]))
+    product = await ps.get(pid)
     if not product:
         await message.answer('Товар не найден.')
         return
-    await ps.update_aliases(product, parts[2])
-    await message.answer('Алиасы обновлены.')
+    await ps.update_aliases(product, aliases)
+    await message.answer('Алиасы обновлены.', reply_markup=pool_menu_keyboard())
+    await state.clear()

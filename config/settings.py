@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     google_spreadsheet_id: str = Field(alias='GOOGLE_SPREADSHEET_ID')
     template_sheet_name: str = Field(default='Шаблон', alias='TEMPLATE_SHEET_NAME')
 
-    crm_name_column: str = Field(default='Наименование', alias='CRM_NAME_COLUMN')
-    crm_stock_column: str = Field(default='Остаток', alias='CRM_STOCK_COLUMN')
+    crm_name_column: str = Field(default='Название', alias='CRM_NAME_COLUMN')
+    crm_stock_column: str = Field(default='Ост. на складе', alias='CRM_STOCK_COLUMN')
     crm_header_row: int = Field(default=1, alias='CRM_HEADER_ROW')
 
 

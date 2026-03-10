@@ -3,7 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.keyboards.inline import role_keyboard
+from bot.keyboards.inline import access_menu_keyboard, back_keyboard, role_keyboard
 from bot.states.forms import AccessStates
 from db.models import User, UserRole
 from services.auth_service import AuthService
@@ -16,20 +16,32 @@ def _is_admin(user: User) -> bool:
 
 
 @router.message(F.text == 'Доступы')
-async def access_menu(message: Message, db_user: User) -> None:
+@router.callback_query(F.data == 'menu:access')
+async def access_menu(event: Message | CallbackQuery, db_user: User) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
     if not _is_admin(db_user):
-        await message.answer('Раздел доступен только администратору.')
+        await msg.answer('Раздел доступен только администратору.')
+        if isinstance(event, CallbackQuery):
+            await event.answer()
         return
-    await message.answer('Команды:\n/access_add\n/access_revoke <@username|telegram_id>')
+    await msg.answer('Управление доступами:', reply_markup=access_menu_keyboard())
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 @router.message(F.text == '/access_add')
-async def add_user_start(message: Message, state: FSMContext, db_user: User) -> None:
+@router.callback_query(F.data == 'access:add')
+async def add_user_start(event: Message | CallbackQuery, state: FSMContext, db_user: User) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
     if not _is_admin(db_user):
-        await message.answer('Только для админа.')
+        await msg.answer('Только для админа.')
+        if isinstance(event, CallbackQuery):
+            await event.answer()
         return
     await state.set_state(AccessStates.waiting_user_identifier)
-    await message.answer('Введите @username или telegram_id пользователя:')
+    await msg.answer('Введите @username или telegram_id пользователя:', reply_markup=back_keyboard('menu:access'))
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 @router.message(AccessStates.waiting_user_identifier)
@@ -49,24 +61,41 @@ async def add_user_finish(callback: CallbackQuery, state: FSMContext, session: A
         await callback.message.answer('Пользователь не найден в базе. Он должен хотя бы раз написать боту /start.')
     else:
         await auth.set_role(user, role)
-        await callback.message.answer(f'Доступ выдан: {user.telegram_id}, роль={role.value}.')
+        await callback.message.answer(f'Доступ выдан: {user.telegram_id}, роль={role.value}.', reply_markup=access_menu_keyboard())
     await callback.answer()
     await state.clear()
 
 
+@router.callback_query(F.data == 'access:revoke')
+async def revoke_access_start(callback: CallbackQuery, state: FSMContext, db_user: User) -> None:
+    if not _is_admin(db_user):
+        await callback.message.answer('Только для админа.')
+        await callback.answer()
+        return
+    await state.set_state(AccessStates.waiting_revoke_identifier)
+    await callback.message.answer('Введите @username или telegram_id для отзыва доступа:', reply_markup=back_keyboard('menu:access'))
+    await callback.answer()
+
+
+@router.message(AccessStates.waiting_revoke_identifier)
 @router.message(F.text.startswith('/access_revoke'))
-async def revoke_access(message: Message, session: AsyncSession, db_user: User) -> None:
+async def revoke_access(message: Message, session: AsyncSession, db_user: User, state: FSMContext) -> None:
     if not _is_admin(db_user):
         await message.answer('Только для админа.')
         return
-    parts = (message.text or '').split(maxsplit=1)
-    if len(parts) != 2:
-        await message.answer('Использование: /access_revoke <@username|telegram_id>')
+    if await state.get_state() == AccessStates.waiting_revoke_identifier.state:
+        identifier = (message.text or '').strip()
+    else:
+        parts = (message.text or '').split(maxsplit=1)
+        identifier = parts[1] if len(parts) == 2 else ''
+    if not identifier:
+        await message.answer('Нужен @username или telegram_id.')
         return
     auth = AuthService(session)
-    user = await auth.get_by_identifier(parts[1])
+    user = await auth.get_by_identifier(identifier)
     if not user:
         await message.answer('Пользователь не найден.')
         return
     await auth.revoke_access(user)
-    await message.answer('Доступ отозван.')
+    await message.answer('Доступ отозван.', reply_markup=access_menu_keyboard())
+    await state.clear()

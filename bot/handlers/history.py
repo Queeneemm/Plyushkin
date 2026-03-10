@@ -9,13 +9,19 @@ router = Router()
 
 
 @router.message(F.text == 'История инвентарок')
-async def history_list(message: Message, session: AsyncSession) -> None:
+@router.callback_query(F.data == 'menu:history')
+async def history_list(event: Message | CallbackQuery, session: AsyncSession) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
     sessions = await InventoryService(session).history()
     if not sessions:
-        await message.answer('История пуста.')
+        await msg.answer('История пуста.')
+        if isinstance(event, CallbackQuery):
+            await event.answer()
         return
     pairs = [(s.id, f"#{s.id} {s.finished_at:%Y-%m-%d %H:%M}") for s in sessions if s.finished_at]
-    await message.answer('Выберите инвентарку:', reply_markup=sessions_keyboard(pairs))
+    await msg.answer('Выберите инвентарку:', reply_markup=sessions_keyboard(pairs, back='menu:main'))
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 @router.callback_query(F.data.startswith('sess:'))
