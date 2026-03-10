@@ -1,0 +1,227 @@
+from pathlib import Path
+
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.keyboards.inline import duplicate_keyboard, finish_confirm_keyboard, item_actions_keyboard, items_keyboard, products_keyboard
+from bot.states.forms import EditItemStates, InventoryStates
+from config.settings import get_settings
+from db.models import InventoryItem, User
+from services.crm_parser import CRMExcelParser, CRMParserConfig
+from services.google_sheets_service import GoogleSheetsService
+from services.inventory_service import InventoryService
+from services.product_service import ProductService
+
+router = Router()
+
+
+@router.message(F.text == 'Начать инвентарку / Продолжить инвентарку')
+async def start_or_continue_inventory(message: Message, session: AsyncSession, db_user: User) -> None:
+    inv = InventoryService(session)
+    s = await inv.get_or_create_active(db_user.id)
+    await message.answer(f'Активная инвентарка #{s.id}. Используйте кнопку "Внести позицию".')
+
+
+@router.message(F.text == 'Внести позицию')
+async def ask_search(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await InventoryService(session).get_active_session():
+        await message.answer('Нет активной инвентарки. Сначала нажмите "Начать инвентарку / Продолжить инвентарку".')
+        return
+    await state.set_state(InventoryStates.waiting_search_query)
+    await message.answer('Введите часть названия или алиас товара:')
+
+
+@router.message(InventoryStates.waiting_search_query)
+async def search_product(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    query = (message.text or '').strip()
+    products = await ProductService(session).search_active(query)
+    if not products:
+        await message.answer('Ничего не найдено. Попробуйте другой запрос.')
+        return
+    await message.answer('Выберите товар:', reply_markup=products_keyboard([(p.id, p.full_name) for p in products]))
+
+
+@router.callback_query(F.data.startswith('product:'))
+async def product_selected(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    product_id = int(callback.data.split(':')[1])
+    active = await InventoryService(session).get_active_session()
+    if not active:
+        await callback.answer('Нет активной инвентарки', show_alert=True)
+        return
+    existing = await InventoryService(session).get_item(active.id, product_id)
+    await state.update_data(product_id=product_id)
+    if existing:
+        await state.set_state(InventoryStates.waiting_duplicate_action)
+        await callback.message.answer('Товар уже внесён. Что сделать?', reply_markup=duplicate_keyboard())
+    else:
+        await state.set_state(InventoryStates.waiting_quantity)
+        await callback.message.answer('Введите количество:')
+    await callback.answer()
+
+
+@router.callback_query(InventoryStates.waiting_duplicate_action, F.data.startswith('dup:'))
+async def duplicate_action(callback: CallbackQuery, state: FSMContext) -> None:
+    action = callback.data.split(':')[1]
+    if action == 'cancel':
+        await state.clear()
+        await callback.message.answer('Отменено.')
+    else:
+        await state.update_data(duplicate_mode='add' if action == 'add' else 'replace')
+        await state.set_state(InventoryStates.waiting_quantity)
+        await callback.message.answer('Введите количество:')
+    await callback.answer()
+
+
+@router.message(InventoryStates.waiting_quantity)
+async def save_quantity(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        qty = float((message.text or '').replace(',', '.'))
+        if qty < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer('Введите неотрицательное число.')
+        return
+
+    data = await state.get_data()
+    product_id = data['product_id']
+    mode = data.get('duplicate_mode', 'replace')
+
+    active = await InventoryService(session).get_active_session()
+    if not active:
+        await message.answer('Активная инвентарка не найдена.')
+        await state.clear()
+        return
+    await InventoryService(session).upsert_item(active.id, product_id, qty, mode=mode)
+    await message.answer('Позиция сохранена.')
+    await state.clear()
+
+
+@router.message(F.text == 'Показать внесённые')
+async def show_items(message: Message, session: AsyncSession) -> None:
+    active = await InventoryService(session).get_active_session()
+    if not active:
+        await message.answer('Нет активной инвентарки.')
+        return
+    items = await InventoryService(session).list_items(active.id)
+    if not items:
+        await message.answer('Пока нет внесённых позиций.')
+        return
+    text = '\n'.join([f'• {it.product.full_name}: {float(it.quantity_fact)}' for it in items[:30]])
+    await message.answer(f'Внесено:\n{text}')
+    await message.answer('Выберите позицию для изменения/удаления:', reply_markup=items_keyboard([(it.id, it.product.full_name) for it in items[:20]]))
+
+
+@router.callback_query(F.data.startswith('item:'))
+async def show_item_actions(callback: CallbackQuery, session: AsyncSession) -> None:
+    item_id = int(callback.data.split(':')[1])
+    await callback.message.answer('Действия с позицией:', reply_markup=item_actions_keyboard(item_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('item_edit:'))
+async def edit_item_start(callback: CallbackQuery, state: FSMContext) -> None:
+    item_id = int(callback.data.split(':')[1])
+    await state.update_data(edit_item_id=item_id)
+    await state.set_state(EditItemStates.waiting_new_quantity)
+    await callback.message.answer('Введите новое количество:')
+    await callback.answer()
+
+
+@router.message(EditItemStates.waiting_new_quantity)
+async def edit_item_finish(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        qty = float((message.text or '').replace(',', '.'))
+    except ValueError:
+        await message.answer('Введите число.')
+        return
+    data = await state.get_data()
+    item = await session.get(InventoryItem, data['edit_item_id'])
+    if not item:
+        await message.answer('Позиция не найдена.')
+        await state.clear()
+        return
+    item.quantity_fact = qty
+    await session.commit()
+    await message.answer('Количество обновлено.')
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith('item_del:'))
+async def delete_item(callback: CallbackQuery, session: AsyncSession) -> None:
+    item_id = int(callback.data.split(':')[1])
+    await InventoryService(session).delete_item(item_id)
+    await callback.message.answer('Позиция удалена.')
+    await callback.answer()
+
+
+@router.message(F.text == 'Завершить инвентарку')
+async def finish_inventory(message: Message, session: AsyncSession) -> None:
+    if not await InventoryService(session).get_active_session():
+        await message.answer('Нет активной инвентарки.')
+        return
+    await message.answer('Подтвердите завершение и загрузку CRM файла.', reply_markup=finish_confirm_keyboard())
+
+
+@router.callback_query(F.data == 'finish:yes')
+async def finish_confirmed(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(InventoryStates.waiting_finish_crm_file)
+    await callback.message.answer('Отправьте xlsx файл CRM документом.')
+    await callback.answer()
+
+
+@router.callback_query(F.data == 'finish:no')
+async def finish_cancelled(callback: CallbackQuery) -> None:
+    await callback.message.answer('Завершение отменено.')
+    await callback.answer()
+
+
+@router.message(InventoryStates.waiting_finish_crm_file, F.document)
+async def process_finish_file(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    doc = message.document
+    if not doc.file_name.lower().endswith('.xlsx'):
+        await message.answer('Нужен именно .xlsx файл.')
+        return
+
+    path = Path('tmp')
+    path.mkdir(exist_ok=True)
+    local = path / f'{doc.file_unique_id}.xlsx'
+    await message.bot.download(doc, destination=local)
+
+    settings = get_settings()
+    parser = CRMExcelParser(CRMParserConfig(settings.crm_name_column, settings.crm_stock_column, settings.crm_header_row))
+    crm_map = parser.parse_stock(local)
+
+    inv = InventoryService(session)
+    active = await inv.get_active_session()
+    if not active:
+        await message.answer('Активная инвентарка не найдена.')
+        await state.clear()
+        return
+
+    fact_map = await inv.fact_map(active.id)
+    all_product_ids = list(fact_map.keys())
+
+    product_service = ProductService(session)
+    for crm_name in crm_map.keys():
+        products = await product_service.search_active(crm_name, limit=1)
+        if products and products[0].full_name.lower() == crm_name.lower():
+            all_product_ids.append(products[0].id)
+
+    products = await inv.products_by_ids(list(set(all_product_ids)))
+    rows: list[tuple[str, float, float]] = []
+
+    for pid, product in sorted(products.items(), key=lambda x: x[1].full_name.lower()):
+        crm_qty = crm_map.get(product.full_name, 0)
+        fact_qty = fact_map.get(pid, 0)
+        rows.append((product.full_name, crm_qty, fact_qty))
+
+    gs = GoogleSheetsService(settings.google_credentials_json, settings.google_spreadsheet_id, settings.template_sheet_name)
+    _, tab_name, url = gs.create_inventory_sheet()
+    if rows:
+        gs.write_inventory_rows(tab_name, rows)
+
+    await inv.finish_session(active.id, url, tab_name)
+    await message.answer(f'Инвентарка завершена. Лист: {url}\nПозиций: {len(rows)}')
+    await state.clear()
