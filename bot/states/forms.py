@@ -12,13 +12,23 @@ class PoolStates(StatesGroup):
     waiting_import_file = State()
     waiting_manual_name = State()
     waiting_manual_aliases = State()
-    waiting_edit_name = State()
-    waiting_edit_aliases = State()
+    waiting_search_query = State()
+    waiting_archive_id = State()
+    waiting_restore_id = State()
+    waiting_rename_id = State()
+    waiting_rename_name = State()
+    waiting_aliases_id = State()
+    waiting_aliases_value = State()
 
 
 class AccessStates(StatesGroup):
     waiting_user_identifier = State()
     waiting_user_role = State()
+    waiting_revoke_identifier = State()
+
+
+class SummaryStates(StatesGroup):
+    waiting_chat_choice = State()
 
 
 class EditItemStates(StatesGroup):
