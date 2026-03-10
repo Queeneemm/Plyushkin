@@ -64,6 +64,7 @@ python -m bot.main
 - `/pool_restore <id>`
 - `/pool_rename <id> <новое имя>`
 - `/pool_aliases <id> <alias1,alias2>`
+- Выгрузка базы в Excel: кнопка `Управление пулом` → `Выгрузить базу (Excel)`.
 
 ## Команды доступов
 - `/access_add`

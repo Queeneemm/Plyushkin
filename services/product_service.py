@@ -57,9 +57,13 @@ class ProductService:
         await self.session.commit()
 
     async def list_all(self, include_archived: bool = False, limit: int = 30) -> list[Product]:
-        stmt = select(Product).order_by(Product.full_name).limit(limit)
+        stmt = select(Product).options(selectinload(Product.aliases)).order_by(Product.full_name).limit(limit)
         if not include_archived:
             stmt = stmt.where(Product.is_active.is_(True))
+        return list((await self.session.scalars(stmt)).all())
+
+    async def list_for_export(self) -> list[Product]:
+        stmt = select(Product).options(selectinload(Product.aliases)).order_by(Product.id)
         return list((await self.session.scalars(stmt)).all())
 
     async def import_pool(self, names: list[str]) -> tuple[int, int]:
