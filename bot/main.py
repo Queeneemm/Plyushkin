@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from bot.handlers import access, history, inventory, pool, start, summary
@@ -17,7 +18,7 @@ async def main() -> None:
 
     await init_db()
 
-    bot = Bot(settings.bot_token, parse_mode=ParseMode.HTML)
+    bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
     dp.message.middleware(DbSessionMiddleware())
