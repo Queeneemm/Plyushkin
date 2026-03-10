@@ -31,33 +31,58 @@ class CRMExcelParser:
                 mapping[self._normalize_header(str(cell.value))] = idx
         return mapping
 
+    def _find_column_indices(self, ws) -> tuple[int | None, int | None, int]:
+        name_aliases = ('название', 'наименование')
+        stock_aliases = ('остаток', 'остнаскладе', 'остатокнаскладе')
+
+        def _resolve_indices(header_map: dict[str, int]) -> tuple[int | None, int | None]:
+            name_idx = header_map.get(self._normalize_header(self.config.name_column))
+            stock_idx = header_map.get(self._normalize_header(self.config.stock_column))
+
+            if not name_idx:
+                for alias in name_aliases:
+                    name_idx = header_map.get(self._normalize_header(alias))
+                    if name_idx:
+                        break
+
+            if not stock_idx:
+                for alias in stock_aliases:
+                    stock_idx = header_map.get(self._normalize_header(alias))
+                    if stock_idx:
+                        break
+
+            return name_idx, stock_idx
+
+        configured_row = self.config.header_row
+        header_cells = next(ws.iter_rows(min_row=configured_row, max_row=configured_row))
+        header_map = self._get_headers_map(header_cells)
+        name_idx, stock_idx = _resolve_indices(header_map)
+        if name_idx and stock_idx:
+            return name_idx, stock_idx, configured_row
+
+        scan_to_row = min(ws.max_row, configured_row + 10)
+        for row_idx in range(1, scan_to_row + 1):
+            if row_idx == configured_row:
+                continue
+            candidate_cells = next(ws.iter_rows(min_row=row_idx, max_row=row_idx))
+            candidate_map = self._get_headers_map(candidate_cells)
+            cand_name_idx, cand_stock_idx = _resolve_indices(candidate_map)
+            if cand_name_idx and cand_stock_idx:
+                return cand_name_idx, cand_stock_idx, row_idx
+
+        return name_idx, stock_idx, configured_row
+
     def parse_stock(self, file_path: str | Path) -> dict[str, float]:
         wb = load_workbook(file_path, data_only=True)
         ws = wb[self.config.sheet_name] if self.config.sheet_name and self.config.sheet_name in wb.sheetnames else wb.active
 
-        header_cells = next(ws.iter_rows(min_row=self.config.header_row, max_row=self.config.header_row))
-        header_map = self._get_headers_map(header_cells)
-
-        name_idx = header_map.get(self._normalize_header(self.config.name_column))
-        stock_idx = header_map.get(self._normalize_header(self.config.stock_column))
-
-        if not name_idx:
-            for alias in ('название', 'наименование'):
-                name_idx = header_map.get(self._normalize_header(alias))
-                if name_idx:
-                    break
-
-        if not stock_idx:
-            for alias in ('остаток', 'остнаскладе', 'остатокнаскладе'):
-                stock_idx = header_map.get(self._normalize_header(alias))
-                if stock_idx:
-                    break
+        name_idx, stock_idx, header_row = self._find_column_indices(ws)
 
         if not name_idx or not stock_idx:
             raise ValueError('Не найдены требуемые колонки в CRM файле')
 
         result: dict[str, float] = {}
-        for row in ws.iter_rows(min_row=self.config.header_row + 1):
+        for row in ws.iter_rows(min_row=header_row + 1):
             raw_name = row[name_idx - 1].value
             raw_stock = row[stock_idx - 1].value
             if raw_name is None:
