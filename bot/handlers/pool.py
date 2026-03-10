@@ -1,17 +1,45 @@
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+from openpyxl import Workbook
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.inline import back_keyboard, pool_menu_keyboard
 from bot.states.forms import PoolStates
 from config.settings import get_settings
+from db.models import Product
 from services.crm_parser import CRMExcelParser, CRMParserConfig
 from services.product_service import ProductService
 
 router = Router()
+
+
+def _build_pool_export(products: list[Product]) -> Path:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Товары'
+    ws.append(['ID', 'Наименование', 'Статус', 'Источник', 'Алиасы'])
+
+    for product in products:
+        aliases = ', '.join(alias.alias for alias in product.aliases)
+        ws.append(
+            [
+                product.id,
+                product.full_name,
+                'Активен' if product.is_active else 'Архив',
+                product.created_from.value,
+                aliases,
+            ]
+        )
+
+    with NamedTemporaryFile(prefix='pool_export_', suffix='.xlsx', delete=False) as tmp:
+        export_path = Path(tmp.name)
+    wb.save(export_path)
+    return export_path
 
 
 @router.message(F.text == 'Управление пулом')
@@ -244,3 +272,23 @@ async def pool_aliases(message: Message, session: AsyncSession, state: FSMContex
     await ps.update_aliases(product, aliases)
     await message.answer('Алиасы обновлены.', reply_markup=pool_menu_keyboard())
     await state.clear()
+
+
+@router.callback_query(F.data == 'pool:export')
+async def pool_export(callback: CallbackQuery, session: AsyncSession) -> None:
+    products = await ProductService(session).list_for_export()
+    if not products:
+        await callback.message.answer('В базе нет товаров для выгрузки.', reply_markup=pool_menu_keyboard())
+        await callback.answer()
+        return
+
+    export_path = _build_pool_export(products)
+    try:
+        await callback.message.answer_document(
+            document=FSInputFile(export_path),
+            caption=f'Выгрузка базы товаров ({len(products)} шт.)',
+            reply_markup=pool_menu_keyboard(),
+        )
+    finally:
+        export_path.unlink(missing_ok=True)
+    await callback.answer()

@@ -35,6 +35,7 @@ def pool_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text='Восстановить', callback_data='pool:restore')],
             [InlineKeyboardButton(text='Переименовать', callback_data='pool:rename')],
             [InlineKeyboardButton(text='Алиасы', callback_data='pool:aliases')],
+            [InlineKeyboardButton(text='Выгрузить базу (Excel)', callback_data='pool:export')],
             [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:main')],
         ]
     )
