@@ -119,6 +119,13 @@ def chats_keyboard(chats: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def topics_keyboard(chat_id: int, topics: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=title[:60], callback_data=f'topic:{chat_id}:{tid}')] for tid, title in topics]
+    rows.append([InlineKeyboardButton(text='В общий чат', callback_data=f'topic:{chat_id}:0')])
+    rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:summary')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def sessions_keyboard(sessions: list[tuple[int, str]], prefix: str = 'sess', back: str = 'menu:main') -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=label, callback_data=f'{prefix}:{sid}')] for sid, label in sessions]
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=back)])

@@ -29,6 +29,7 @@ class AccessStates(StatesGroup):
 
 class SummaryStates(StatesGroup):
     waiting_chat_choice = State()
+    waiting_topic_choice = State()
 
 
 class EditItemStates(StatesGroup):

@@ -53,4 +53,11 @@ async def cancel_flow(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(F.chat.type.in_({'group', 'supergroup'}))
 async def track_group_chat(message: Message, session: AsyncSession) -> None:
     title = message.chat.title or f'Chat {message.chat.id}'
-    await ChatService(session).remember_chat(message.chat.id, title)
+    service = ChatService(session)
+    await service.remember_chat(message.chat.id, title)
+
+    if message.is_topic_message and message.message_thread_id:
+        thread_title = title
+        if message.reply_to_message and getattr(message.reply_to_message, 'forum_topic_created', None):
+            thread_title = message.reply_to_message.forum_topic_created.name or thread_title
+        await service.remember_topic(message.chat.id, message.message_thread_id, thread_title)
