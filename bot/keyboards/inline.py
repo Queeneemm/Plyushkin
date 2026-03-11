@@ -129,3 +129,24 @@ def sessions_keyboard(sessions: list[tuple[int, str]], prefix: str = 'sess', bac
     rows = [[InlineKeyboardButton(text=label, callback_data=f'{prefix}:{sid}')] for sid, label in sessions]
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=back)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def history_session_actions_keyboard(session_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='🗑 Удалить инвентаризацию', callback_data=f'sessdel:{session_id}')],
+            [InlineKeyboardButton(text='⬅️ К истории', callback_data='menu:history')],
+        ]
+    )
+
+
+def delete_session_confirm_keyboard(session_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text='Да, удалить', callback_data=f'sessdel_confirm:{session_id}'),
+                InlineKeyboardButton(text='Отмена', callback_data=f'sess:{session_id}'),
+            ],
+            [InlineKeyboardButton(text='⬅️ К истории', callback_data='menu:history')],
+        ]
+    )

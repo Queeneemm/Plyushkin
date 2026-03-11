@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import AllowedChat, AllowedChatTopic
@@ -29,7 +29,42 @@ class ChatService:
         await self.session.commit()
 
     async def list_allowed(self) -> list[AllowedChat]:
-        return list((await self.session.scalars(select(AllowedChat).where(AllowedChat.is_active.is_(True)).order_by(AllowedChat.title))).all())
+        subq = (
+            select(AllowedChat.chat_id, func.max(AllowedChat.id).label('max_id'))
+            .where(AllowedChat.is_active.is_(True))
+            .group_by(AllowedChat.chat_id)
+            .subquery()
+        )
+        stmt = (
+            select(AllowedChat)
+            .join(subq, and_(AllowedChat.chat_id == subq.c.chat_id, AllowedChat.id == subq.c.max_id))
+            .order_by(AllowedChat.title)
+        )
+        return list((await self.session.scalars(stmt)).all())
+
+    async def refresh_allowed_chats(self, bot) -> list[AllowedChat]:
+        chats = await self.list_allowed()
+        changed = False
+        for chat in chats:
+            try:
+                tg_chat = await bot.get_chat(chat.chat_id)
+            except Exception:
+                if chat.is_active:
+                    chat.is_active = False
+                    changed = True
+                continue
+
+            title = getattr(tg_chat, 'title', None) or f'Chat {chat.chat_id}'
+            if chat.title != title:
+                chat.title = title
+                changed = True
+            if not chat.is_active:
+                chat.is_active = True
+                changed = True
+
+        if changed:
+            await self.session.commit()
+        return await self.list_allowed()
 
     async def list_topics(self, chat_id: int) -> list[AllowedChatTopic]:
         return list(
