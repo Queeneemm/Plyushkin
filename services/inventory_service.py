@@ -88,6 +88,14 @@ class InventoryService:
         count = await self.session.scalar(select(func.count(InventoryItem.id)).where(InventoryItem.session_id == session_id))
         return {'session': session, 'items_count': count or 0}
 
+    async def delete_session(self, session_id: int) -> bool:
+        session = await self.session.get(InventorySession, session_id)
+        if not session:
+            return False
+        await self.session.delete(session)
+        await self.session.commit()
+        return True
+
     async def fact_map(self, session_id: int) -> dict[int, float]:
         items = await self.list_items(session_id)
         return {i.product_id: float(i.quantity_fact) for i in items}

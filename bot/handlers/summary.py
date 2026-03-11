@@ -25,10 +25,11 @@ def _format_shortage(raw_value: str) -> str:
 
 def _build_summary_text(session_id: int, finished_at: str, shortage: str, url: str | None) -> str:
     return (
-        f"Краткая сводка по инвентарке #{session_id}\n"
-        f"Дата: {finished_at}\n"
-        f"Недостача: {shortage}\n"
-        f"Ссылка: {url or '-'}"
+        '📦 <b>Краткий отчёт по инвентаризации</b>\n\n'
+        f'🆔 Инвентаризация: <b>#{session_id}</b>\n'
+        f'🗓 Дата завершения: <b>{finished_at}</b>\n'
+        f'📉 Недостача: <b>{shortage}</b>\n'
+        f'🔗 Таблица: {url or "-"}'
     )
 
 
@@ -64,7 +65,7 @@ async def choose_chat(callback: CallbackQuery, session: AsyncSession, state: FSM
     sid = int(callback.data.split(':')[1])
     await state.set_state(SummaryStates.waiting_chat_choice)
     await state.update_data(summary_session_id=sid)
-    chats = await ChatService(session).list_allowed()
+    chats = await ChatService(session).refresh_allowed_chats(callback.message.bot)
     if not chats:
         await callback.message.answer('Нет доступных чатов. Добавьте бота в чат и отправьте там сообщение.')
         await callback.answer()
@@ -134,7 +135,7 @@ async def send_summary(
     shortage = _read_shortage_from_sheet(s.google_sheet_tab_name)
     text = _build_summary_text(s.id, s.finished_at.strftime('%Y-%m-%d %H:%M'), shortage, s.google_sheet_url)
     try:
-        kwargs = {'chat_id': chat_id, 'text': text}
+        kwargs = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
         if message_thread_id is not None:
             kwargs['message_thread_id'] = message_thread_id
         await callback.message.bot.send_message(**kwargs)
@@ -174,7 +175,7 @@ async def send_summary_cmd(message: Message, session: AsyncSession) -> None:
     shortage = _read_shortage_from_sheet(s.google_sheet_tab_name)
     text = _build_summary_text(s.id, s.finished_at.strftime('%Y-%m-%d %H:%M'), shortage, s.google_sheet_url)
     try:
-        kwargs = {'chat_id': chat_id, 'text': text}
+        kwargs = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
         if message_thread_id is not None:
             kwargs['message_thread_id'] = message_thread_id
         await message.bot.send_message(**kwargs)
