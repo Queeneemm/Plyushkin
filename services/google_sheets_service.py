@@ -50,3 +50,13 @@ class GoogleSheetsService:
             ],
         }
         self.service.spreadsheets().values().batchUpdate(spreadsheetId=self.spreadsheet_id, body=body).execute()
+
+    def read_cell(self, tab_name: str, cell: str) -> str:
+        result = self.service.spreadsheets().values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"'{tab_name}'!{cell}",
+        ).execute()
+        values = result.get('values', [])
+        if not values or not values[0]:
+            return ''
+        return str(values[0][0]).strip()

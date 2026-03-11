@@ -5,10 +5,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.inline import chats_keyboard, sessions_keyboard, topics_keyboard
 from bot.states.forms import SummaryStates
+from config.settings import get_settings
 from services.chat_service import ChatService
+from services.google_sheets_service import GoogleSheetsService
 from services.inventory_service import InventoryService
 
 router = Router()
+
+
+def _format_shortage(raw_value: str) -> str:
+    value = (raw_value or '').strip().replace('\xa0', ' ')
+    if not value:
+        return 'не указана'
+    compact = value.replace(' ', '')
+    if compact.startswith('-'):
+        return f"минус {compact[1:]}"
+    return f"+{compact.lstrip('+')}"
+
+
+def _build_summary_text(session_id: int, finished_at: str, shortage: str, url: str | None) -> str:
+    return (
+        f"Краткая сводка по инвентарке #{session_id}\n"
+        f"Дата: {finished_at}\n"
+        f"Недостача: {shortage}\n"
+        f"Ссылка: {url or '-'}"
+    )
+
+
+def _read_shortage_from_sheet(tab_name: str | None) -> str:
+    if not tab_name:
+        return 'не указана'
+    settings = get_settings()
+    gs = GoogleSheetsService(settings.google_credentials_json, settings.google_spreadsheet_id, settings.template_sheet_name)
+    raw_shortage = gs.read_cell(tab_name, 'L2')
+    return _format_shortage(raw_shortage)
 
 
 @router.message(F.text == 'Отправить сводку')
@@ -101,13 +131,8 @@ async def send_summary(
         await callback.answer()
         return
 
-    text = (
-        f"Сводка по инвентарке #{s.id}\n"
-        f"Дата: {s.finished_at:%Y-%m-%d %H:%M}\n"
-        f"Позиций: {card['items_count']}\n"
-        f"Ссылка: {s.google_sheet_url or '-'}\n"
-        f"Статус: отчёт сформирован"
-    )
+    shortage = _read_shortage_from_sheet(s.google_sheet_tab_name)
+    text = _build_summary_text(s.id, s.finished_at.strftime('%Y-%m-%d %H:%M'), shortage, s.google_sheet_url)
     try:
         kwargs = {'chat_id': chat_id, 'text': text}
         if message_thread_id is not None:
@@ -145,13 +170,9 @@ async def send_summary_cmd(message: Message, session: AsyncSession) -> None:
     if not s:
         await message.answer('Инвентарка не найдена.')
         return
-    text = (
-        f"Сводка по инвентарке #{s.id}\n"
-        f"Дата: {s.finished_at:%Y-%m-%d %H:%M}\n"
-        f"Позиций: {card['items_count']}\n"
-        f"Ссылка: {s.google_sheet_url or '-'}\n"
-        f"Статус: отчёт сформирован"
-    )
+
+    shortage = _read_shortage_from_sheet(s.google_sheet_tab_name)
+    text = _build_summary_text(s.id, s.finished_at.strftime('%Y-%m-%d %H:%M'), shortage, s.google_sheet_url)
     try:
         kwargs = {'chat_id': chat_id, 'text': text}
         if message_thread_id is not None:

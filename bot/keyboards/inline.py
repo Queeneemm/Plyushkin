@@ -1,6 +1,5 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -12,7 +11,6 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
-
 def inventory_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -20,10 +18,10 @@ def inventory_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text='Внести позицию', callback_data='inv:add_item')],
             [InlineKeyboardButton(text='Показать внесённые', callback_data='inv:show_items')],
             [InlineKeyboardButton(text='Завершить инвентарку', callback_data='inv:finish')],
+            [InlineKeyboardButton(text='Отменить инвентарку', callback_data='inv:cancel')],
             [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:main')],
         ]
     )
-
 
 def pool_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -40,7 +38,6 @@ def pool_menu_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
-
 def access_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -50,16 +47,13 @@ def access_menu_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
-
 def back_keyboard(target: str = 'menu:main') -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Назад', callback_data=target)]])
-
 
 def products_keyboard(items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=name[:60], callback_data=f'product:{pid}')] for pid, name in items]
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:inventory')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def duplicate_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -68,6 +62,17 @@ def duplicate_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text='Заменить', callback_data='dup:replace'),
                 InlineKeyboardButton(text='Прибавить', callback_data='dup:add'),
                 InlineKeyboardButton(text='Отмена', callback_data='dup:cancel'),
+            ],
+            [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:inventory')],
+        ]
+    )
+
+def cancel_inventory_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text='Да, отменить', callback_data='invcancel:yes'),
+                InlineKeyboardButton(text='Нет', callback_data='invcancel:no'),
             ],
             [InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:inventory')],
         ]
@@ -85,12 +90,10 @@ def finish_confirm_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
-
 def items_keyboard(items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=name[:60], callback_data=f'item:{iid}')] for iid, name in items]
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:inventory')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def item_actions_keyboard(item_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -103,7 +106,6 @@ def item_actions_keyboard(item_id: int) -> InlineKeyboardMarkup:
         ]
     )
 
-
 def role_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -112,19 +114,16 @@ def role_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
-
 def chats_keyboard(chats: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title[:60], callback_data=f'chat:{cid}')] for cid, title in chats]
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:summary')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def topics_keyboard(chat_id: int, topics: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title[:60], callback_data=f'topic:{chat_id}:{tid}')] for tid, title in topics]
     rows.append([InlineKeyboardButton(text='В общий чат', callback_data=f'topic:{chat_id}:0')])
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='menu:summary')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def sessions_keyboard(sessions: list[tuple[int, str]], prefix: str = 'sess', back: str = 'menu:main') -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=label, callback_data=f'{prefix}:{sid}')] for sid, label in sessions]
