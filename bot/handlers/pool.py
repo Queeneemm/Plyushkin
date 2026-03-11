@@ -13,6 +13,7 @@ from bot.states.forms import PoolStates
 from config.settings import get_settings
 from db.models import Product
 from services.crm_parser import CRMExcelParser, CRMParserConfig
+from bot.utils.text import parse_ids
 from services.product_service import ProductService
 
 router = Router()
@@ -235,17 +236,18 @@ async def pool_rename(message: Message, session: AsyncSession, state: FSMContext
 @router.callback_query(F.data == 'pool:aliases')
 async def pool_aliases_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PoolStates.waiting_aliases_id)
-    await callback.message.answer('Введите ID товара для обновления алиасов:', reply_markup=back_keyboard('menu:pool'))
+    await callback.message.answer('Введите ID товара (или список ID через запятую) для обновления алиасов:', reply_markup=back_keyboard('menu:pool'))
     await callback.answer()
 
 
 @router.message(PoolStates.waiting_aliases_id)
 async def pool_aliases_id(message: Message, state: FSMContext) -> None:
     raw = (message.text or '').strip()
-    if not raw.isdigit():
-        await message.answer('Нужен числовой id.')
+    ids = parse_ids(raw)
+    if not ids:
+        await message.answer('Нужен числовой id или список id через запятую.')
         return
-    await state.update_data(aliases_id=int(raw))
+    await state.update_data(aliases_ids=ids)
     await state.set_state(PoolStates.waiting_aliases_value)
     await message.answer('Введите алиасы через запятую:', reply_markup=back_keyboard('menu:pool'))
 
@@ -255,22 +257,39 @@ async def pool_aliases_id(message: Message, state: FSMContext) -> None:
 async def pool_aliases(message: Message, session: AsyncSession, state: FSMContext) -> None:
     if await state.get_state() == PoolStates.waiting_aliases_value.state:
         data = await state.get_data()
-        pid = data.get('aliases_id')
+        ids = data.get('aliases_ids', [])
         aliases = (message.text or '').strip()
     else:
         parts = (message.text or '').split(maxsplit=2)
-        pid = int(parts[1]) if len(parts) == 3 and parts[1].isdigit() else None
+        ids = parse_ids(parts[1]) if len(parts) == 3 else []
         aliases = parts[2] if len(parts) == 3 else ''
-    if not pid:
-        await message.answer('Нужен id товара.')
+    if not ids:
+        await message.answer('Нужен id товара или список id через запятую.')
         return
     ps = ProductService(session)
-    product = await ps.get(pid)
-    if not product:
-        await message.answer('Товар не найден.')
-        return
-    await ps.update_aliases(product, aliases)
-    await message.answer('Алиасы обновлены.', reply_markup=pool_menu_keyboard())
+    products: list[Product] = []
+    missing: list[int] = []
+    for pid in ids:
+        product = await ps.get(pid)
+        if not product:
+            missing.append(pid)
+            continue
+        products.append(product)
+
+    if products:
+        await ps.update_aliases_many(products, aliases)
+    updated = len(products)
+    if updated and not missing:
+        await message.answer('Алиасы обновлены.', reply_markup=pool_menu_keyboard())
+    elif updated:
+        missing_text = ', '.join(str(pid) for pid in missing)
+        await message.answer(
+            f'Алиасы обновлены для {updated} товаров. Не найдены id: {missing_text}.',
+            reply_markup=pool_menu_keyboard(),
+        )
+    else:
+        missing_text = ', '.join(str(pid) for pid in missing)
+        await message.answer(f'Товары не найдены. id: {missing_text}.')
     await state.clear()
 
 
