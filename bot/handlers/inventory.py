@@ -14,6 +14,7 @@ from bot.keyboards.inline import (
     items_keyboard,
     products_keyboard,
 )
+from bot.keyboards.main_menu import inventory_input_mode_keyboard, main_menu
 from bot.states.forms import EditItemStates, InventoryStates
 from config.settings import get_settings
 from db.models import InventoryItem, User
@@ -26,11 +27,15 @@ router = Router()
 
 @router.message(F.text == 'Начать инвентарку / Продолжить инвентарку')
 @router.callback_query(F.data == 'inv:start')
-async def start_or_continue_inventory(event: Message | CallbackQuery, session: AsyncSession, db_user: User) -> None:
+async def start_or_continue_inventory(event: Message | CallbackQuery, state: FSMContext, session: AsyncSession, db_user: User) -> None:
     inv = InventoryService(session)
     s = await inv.get_or_create_active(db_user.id)
     msg = event.message if isinstance(event, CallbackQuery) else event
-    await msg.answer(f'Активная инвентарка #{s.id}. Используйте кнопку "Внести позицию".')
+    await state.set_state(InventoryStates.waiting_search_query)
+    await msg.answer(
+        f'Активная инвентарка #{s.id}. Отправьте текст (название/алиас) для добавления позиции. Для выхода нажмите «⬅️ Назад».',
+        reply_markup=inventory_input_mode_keyboard(),
+    )
     if isinstance(event, CallbackQuery):
         await event.answer()
 
@@ -44,11 +49,14 @@ async def ask_search(event: Message | CallbackQuery, state: FSMContext, session:
             await event.answer()
         return
     await state.set_state(InventoryStates.waiting_search_query)
-    await msg.answer('Введите часть названия или алиас товара:', reply_markup=back_keyboard('menu:inventory'))
+    await msg.answer(
+        'Введите часть названия или алиас товара. Для выхода нажмите «⬅️ Назад».',
+        reply_markup=inventory_input_mode_keyboard(),
+    )
     if isinstance(event, CallbackQuery):
         await event.answer()
 
-@router.message(InventoryStates.waiting_search_query)
+@router.message(InventoryStates.waiting_search_query, F.text != '⬅️ Назад')
 async def search_product(message: Message, state: FSMContext, session: AsyncSession) -> None:
     query = (message.text or '').strip()
     products = await ProductService(session).search_active(query)
@@ -106,8 +114,17 @@ async def save_quantity(message: Message, state: FSMContext, session: AsyncSessi
         await state.clear()
         return
     await InventoryService(session).upsert_item(active.id, product_id, qty, mode=mode)
-    await message.answer('Позиция сохранена.')
+    await state.set_state(InventoryStates.waiting_search_query)
+    await message.answer(
+        'Позиция сохранена. Отправьте следующую позицию (название/алиас) или нажмите «⬅️ Назад».',
+        reply_markup=inventory_input_mode_keyboard(),
+    )
+
+
+@router.message(InventoryStates.waiting_search_query, F.text == '⬅️ Назад')
+async def leave_inventory_input_mode(message: Message, state: FSMContext) -> None:
     await state.clear()
+    await message.answer('Вы вышли из режима внесения позиций.', reply_markup=main_menu())
 
 @router.message(F.text == 'Показать внесённые')
 @router.callback_query(F.data == 'inv:show_items')

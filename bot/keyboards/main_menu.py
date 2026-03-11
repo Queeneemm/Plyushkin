@@ -14,3 +14,10 @@ def main_menu() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
+
+
+def inventory_input_mode_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text='⬅️ Назад')]],
+        resize_keyboard=True,
+    )
