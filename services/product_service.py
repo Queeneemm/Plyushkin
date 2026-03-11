@@ -52,6 +52,15 @@ class ProductService:
             self.session.add(ProductAlias(product_id=product.id, alias=alias))
         await self.session.commit()
 
+
+    async def update_aliases_many(self, products: list[Product], aliases_raw: str) -> None:
+        aliases = parse_aliases(aliases_raw)
+        for product in products:
+            await self.session.execute(ProductAlias.__table__.delete().where(ProductAlias.product_id == product.id))
+            for alias in aliases:
+                self.session.add(ProductAlias(product_id=product.id, alias=alias))
+        await self.session.commit()
+
     async def archive(self, product: Product, active: bool) -> None:
         product.is_active = active
         await self.session.commit()
