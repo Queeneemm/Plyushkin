@@ -5,7 +5,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.keyboards.inline import back_keyboard, duplicate_keyboard, finish_confirm_keyboard, item_actions_keyboard, items_keyboard, products_keyboard
+from bot.keyboards.inline import (
+    back_keyboard,
+    cancel_inventory_confirm_keyboard,
+    duplicate_keyboard,
+    finish_confirm_keyboard,
+    item_actions_keyboard,
+    items_keyboard,
+    products_keyboard,
+)
 from bot.states.forms import EditItemStates, InventoryStates
 from config.settings import get_settings
 from db.models import InventoryItem, User
@@ -16,7 +24,6 @@ from services.product_service import ProductService
 
 router = Router()
 
-
 @router.message(F.text == 'Начать инвентарку / Продолжить инвентарку')
 @router.callback_query(F.data == 'inv:start')
 async def start_or_continue_inventory(event: Message | CallbackQuery, session: AsyncSession, db_user: User) -> None:
@@ -26,7 +33,6 @@ async def start_or_continue_inventory(event: Message | CallbackQuery, session: A
     await msg.answer(f'Активная инвентарка #{s.id}. Используйте кнопку "Внести позицию".')
     if isinstance(event, CallbackQuery):
         await event.answer()
-
 
 @router.message(F.text == 'Внести позицию')
 @router.callback_query(F.data == 'inv:add_item')
@@ -42,7 +48,6 @@ async def ask_search(event: Message | CallbackQuery, state: FSMContext, session:
     if isinstance(event, CallbackQuery):
         await event.answer()
 
-
 @router.message(InventoryStates.waiting_search_query)
 async def search_product(message: Message, state: FSMContext, session: AsyncSession) -> None:
     query = (message.text or '').strip()
@@ -51,7 +56,6 @@ async def search_product(message: Message, state: FSMContext, session: AsyncSess
         await message.answer('Ничего не найдено. Попробуйте другой запрос.')
         return
     await message.answer('Выберите товар:', reply_markup=products_keyboard([(p.id, p.full_name) for p in products]))
-
 
 @router.callback_query(F.data.startswith('product:'))
 async def product_selected(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -70,7 +74,6 @@ async def product_selected(callback: CallbackQuery, state: FSMContext, session: 
         await callback.message.answer('Введите количество:', reply_markup=back_keyboard('menu:inventory'))
     await callback.answer()
 
-
 @router.callback_query(InventoryStates.waiting_duplicate_action, F.data.startswith('dup:'))
 async def duplicate_action(callback: CallbackQuery, state: FSMContext) -> None:
     action = callback.data.split(':')[1]
@@ -82,7 +85,6 @@ async def duplicate_action(callback: CallbackQuery, state: FSMContext) -> None:
         await state.set_state(InventoryStates.waiting_quantity)
         await callback.message.answer('Введите количество:', reply_markup=back_keyboard('menu:inventory'))
     await callback.answer()
-
 
 @router.message(InventoryStates.waiting_quantity)
 async def save_quantity(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -107,7 +109,6 @@ async def save_quantity(message: Message, state: FSMContext, session: AsyncSessi
     await message.answer('Позиция сохранена.')
     await state.clear()
 
-
 @router.message(F.text == 'Показать внесённые')
 @router.callback_query(F.data == 'inv:show_items')
 async def show_items(event: Message | CallbackQuery, session: AsyncSession) -> None:
@@ -130,13 +131,11 @@ async def show_items(event: Message | CallbackQuery, session: AsyncSession) -> N
     if isinstance(event, CallbackQuery):
         await event.answer()
 
-
 @router.callback_query(F.data.startswith('item:'))
 async def show_item_actions(callback: CallbackQuery, session: AsyncSession) -> None:
     item_id = int(callback.data.split(':')[1])
     await callback.message.answer('Действия с позицией:', reply_markup=item_actions_keyboard(item_id))
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith('item_edit:'))
 async def edit_item_start(callback: CallbackQuery, state: FSMContext) -> None:
@@ -145,7 +144,6 @@ async def edit_item_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(EditItemStates.waiting_new_quantity)
     await callback.message.answer('Введите новое количество:', reply_markup=back_keyboard('inv:show_items'))
     await callback.answer()
-
 
 @router.message(EditItemStates.waiting_new_quantity)
 async def edit_item_finish(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -165,12 +163,39 @@ async def edit_item_finish(message: Message, state: FSMContext, session: AsyncSe
     await message.answer('Количество обновлено.')
     await state.clear()
 
-
 @router.callback_query(F.data.startswith('item_del:'))
 async def delete_item(callback: CallbackQuery, session: AsyncSession) -> None:
     item_id = int(callback.data.split(':')[1])
     await InventoryService(session).delete_item(item_id)
     await callback.message.answer('Позиция удалена.')
+    await callback.answer()
+
+@router.message(F.text == 'Отменить инвентарку')
+@router.callback_query(F.data == 'inv:cancel')
+async def cancel_inventory_start(event: Message | CallbackQuery, session: AsyncSession) -> None:
+    msg = event.message if isinstance(event, CallbackQuery) else event
+    if not await InventoryService(session).get_active_session():
+        await msg.answer('Нет активной инвентарки.')
+        if isinstance(event, CallbackQuery):
+            await event.answer()
+        return
+    await msg.answer('Точно отменить текущую инвентарку? Все внесённые позиции в ней будут недоступны.', reply_markup=cancel_inventory_confirm_keyboard())
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+
+@router.callback_query(F.data == 'invcancel:yes')
+async def cancel_inventory_confirmed(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    cancelled = await InventoryService(session).cancel_active_session()
+    if cancelled:
+        await callback.message.answer(f'Инвентарка #{cancelled.id} отменена.')
+    else:
+        await callback.message.answer('Нет активной инвентарки.')
+    await state.clear()
+    await callback.answer()
+
+@router.callback_query(F.data == 'invcancel:no')
+async def cancel_inventory_rejected(callback: CallbackQuery) -> None:
+    await callback.message.answer('Отмена инвентарки не выполнена.')
     await callback.answer()
 
 
@@ -187,19 +212,16 @@ async def finish_inventory(event: Message | CallbackQuery, session: AsyncSession
     if isinstance(event, CallbackQuery):
         await event.answer()
 
-
 @router.callback_query(F.data == 'finish:yes')
 async def finish_confirmed(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(InventoryStates.waiting_finish_crm_file)
     await callback.message.answer('Отправьте xlsx файл CRM документом.', reply_markup=back_keyboard('menu:inventory'))
     await callback.answer()
 
-
 @router.callback_query(F.data == 'finish:no')
 async def finish_cancelled(callback: CallbackQuery) -> None:
     await callback.message.answer('Завершение отменено.')
     await callback.answer()
-
 
 @router.message(InventoryStates.waiting_finish_crm_file, F.document)
 async def process_finish_file(message: Message, state: FSMContext, session: AsyncSession) -> None:

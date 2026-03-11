@@ -71,6 +71,15 @@ class InventoryService:
         s.google_sheet_tab_name = tab_name
         await self.session.commit()
 
+    async def cancel_active_session(self) -> InventorySession | None:
+        s = await self.get_active_session()
+        if not s:
+            return None
+        s.status = SessionStatus.cancelled
+        s.finished_at = datetime.utcnow()
+        await self.session.commit()
+        return s
+
     async def history(self, limit: int = 20) -> list[InventorySession]:
         return list((await self.session.scalars(select(InventorySession).where(InventorySession.status == SessionStatus.finished).order_by(InventorySession.finished_at.desc()).limit(limit))).all())
 
